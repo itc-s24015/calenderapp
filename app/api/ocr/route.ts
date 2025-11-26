@@ -10,34 +10,45 @@ import type { OCRResult, APIResponse } from "@/lib/types";
 
 // note: anthropic client will be created dynamically when needed
 
-// Helper: perform local Tesseract OCR on base64 image and return raw text
-async function performTesseractOCR(base64Data: string) {
+// Helper: perform OCR using OCR.space (server-friendly) when API key provided
+async function performOcrSpace(base64Data: string, mimeType: string) {
   try {
-    const buffer = Buffer.from(base64Data, "base64");
-    const tmpDir = os.tmpdir();
-    const fileName = `ocr_input_${Date.now()}.png`;
-    const filePath = path.join(tmpDir, fileName);
-    await fs.promises.writeFile(filePath, buffer);
+    const apiKey = process.env.OCR_SPACE_API_KEY;
+    if (!apiKey) throw new Error("OCR_SPACE_API_KEY not configured");
 
-    // dynamic import to avoid static types issues
-    const tesseract = await import("node-tesseract-ocr");
-    const config = { lang: "jpn+eng", oem: 1, psm: 3 } as any;
-    const text = await tesseract.recognize(filePath, config);
+    const form = new FormData();
+    // OCR.space accepts base64 payload prefixed with data:<mime>;base64,
+    form.append("apikey", apiKey as string);
+    form.append("language", "jpn");
+    form.append("isOverlayRequired", "false");
+    form.append("filetype", mimeType || "png");
+    form.append("base64Image", `data:${mimeType};base64,${base64Data}`);
 
-    // cleanup
-    try {
-      await fs.promises.unlink(filePath);
-    } catch {}
+    const res = await fetch("https://api.ocr.space/parse/image", {
+      method: "POST",
+      body: form as any,
+    });
 
-    return text as string;
+    const json = await res.json();
+    if (!json || json.IsErroredOnProcessing) {
+      const msg = json?.ErrorMessage || json?.ErrorDetails || "OCR.space error";
+      throw new Error(Array.isArray(msg) ? msg.join(";") : String(msg));
+    }
+
+    const parsed = json.ParsedResults?.[0]?.ParsedText || "";
+    return String(parsed);
   } catch (err) {
-    console.error("Tesseract OCR error:", err);
+    console.error("OCR.space error:", err);
     throw err;
   }
 }
 
 export async function GET() {
-  return NextResponse.json({ success: true, data: [], info: "OCR endpoint (POST) is available" });
+  return NextResponse.json({
+    success: true,
+    data: [],
+    info: "OCR endpoint (POST) is available",
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -88,7 +99,9 @@ export async function POST(request: NextRequest) {
         // Dynamic import to avoid build/runtime issues when package is not
         // available or cannot be loaded in the target environment.
         const { default: Anthropic } = await import("@anthropic-ai/sdk");
-        const anthClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const anthClient = new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
 
         message = await anthClient.messages.create({
           model: "claude-sonnet-4-20250514",
@@ -118,7 +131,10 @@ export async function POST(request: NextRequest) {
           ],
         });
       } catch (llmError) {
-        console.error("Anthropic import/call error - falling back to Tesseract:", llmError);
+        console.error(
+          "Anthropic import/call error - falling back to Tesseract:",
+          llmError
+        );
         message = null;
       }
     }
@@ -149,61 +165,69 @@ export async function POST(request: NextRequest) {
         schedules = [];
       }
     } else {
-      // LLMが使えない／失敗した場合は Tesseract による抽出を試みる
+      // LLMが使えない／失敗した場合は OCR.space によるサーバー側フォールバックを試みる
       try {
-        const ocrText = await performTesseractOCR(base64Data);
-        // 簡易パース: 行ごとに name を含む行を抽出して予定とする
-        const lines = ocrText
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean);
-        const nm = name ? name.trim().toLowerCase().replace(/\s+/g, "") : "";
-        const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, "");
-        if (nm) {
-          for (const line of lines) {
-            if (normalize(line).includes(nm)) {
-              // try to extract date/time using regex
-              const dateMatch = line.match(
-                /(20\d{2}[-\/.]\d{1,2}[-\/.]\d{1,2})|(\d{1,2}\/\d{1,2})/
-              );
-              const timeMatch = line.match(/(\d{1,2}:\d{2})/g);
-              const date = dateMatch ? dateMatch[1] || dateMatch[2] : null;
-              const startTime = timeMatch ? timeMatch[0] : null;
-              const endTime =
-                timeMatch && timeMatch.length > 1 ? timeMatch[1] : null;
-              schedules.push({
-                date: date || undefined,
-                startTime: startTime || undefined,
-                endTime: endTime || undefined,
-                title: line,
-                description: "",
-                category: "other",
-                assignedTo: [name],
-                rawText: line,
-              } as OCRResult);
+        if (process.env.OCR_SPACE_API_KEY) {
+          const ocrText = await performOcrSpace(base64Data, mimeType);
+          const lines = ocrText
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean);
+          const nm = name ? name.trim().toLowerCase().replace(/\s+/g, "") : "";
+          const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+          if (nm) {
+            for (const line of lines) {
+              if (normalize(line).includes(nm)) {
+                // try to extract date/time using regex
+                const dateMatch = line.match(
+                  /(20\d{2}[-\/\.]\d{1,2}[-\/\.]\d{1,2})|(\d{1,2}\/\d{1,2})/
+                );
+                const timeMatch = line.match(/(\d{1,2}:\d{2})/g);
+                const date = dateMatch ? dateMatch[1] || dateMatch[2] : null;
+                const startTime = timeMatch ? timeMatch[0] : null;
+                const endTime =
+                  timeMatch && timeMatch.length > 1 ? timeMatch[1] : null;
+                schedules.push({
+                  date: date || undefined,
+                  startTime: startTime || undefined,
+                  endTime: endTime || undefined,
+                  title: line,
+                  description: "",
+                  category: "other",
+                  assignedTo: [name],
+                  rawText: line,
+                } as OCRResult);
+              }
             }
-          }
 
-          // 指定名があるのに抽出が0件なら空配列を返す（ユーザー要求に沿う）
-          schedules = schedules || [];
+            schedules = schedules || [];
+          } else {
+            const firstLine = lines[0] || ocrText;
+            schedules.push({
+              title: firstLine || "抽出された予定",
+              description: "",
+              category: "other",
+              assignedTo: [],
+              rawText: ocrText,
+            } as OCRResult);
+          }
         } else {
-          // 名前指定なしなら全テキストから1つの候補を返す
-          const firstLine = lines[0] || ocrText;
-          schedules.push({
-            // date/startTime/endTime は未定義にする
-            title: firstLine || "抽出された予定",
-            description: "",
-            category: "other",
-            assignedTo: [],
-            rawText: ocrText,
-          } as OCRResult);
+          // サーバー側での OCR 手段が無い場合は明確に伝えて失敗させる
+          return NextResponse.json<APIResponse<null>>(
+            {
+              success: false,
+              error:
+                "サーバー側でのOCRが未設定です。デプロイ先で動作させるには環境変数のいずれかを設定してください: ANTHROPIC_API_KEY または OCR_SPACE_API_KEY。もしくはクライアント側で tesseract.js を使う方法に切り替えてください。",
+            },
+            { status: 501 }
+          );
         }
-      } catch (tessErr) {
-        console.error("Tesseract fallback error:", tessErr);
+      } catch (fallbackErr) {
+        console.error("Server-side OCR fallback error:", fallbackErr);
         return NextResponse.json<APIResponse<null>>(
           {
             success: false,
-            error: "OCR処理（Tesseract）中にエラーが発生しました",
+            error: "サーバー側OCR処理中にエラーが発生しました",
           },
           { status: 500 }
         );
