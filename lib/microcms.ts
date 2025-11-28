@@ -1,7 +1,7 @@
 // lib/microcms.ts
 
 import { createClient } from "microcms-js-sdk";
-import type { Schedule, ScheduleInput, MicroCMSResponse } from "./types";
+import type { Schedule, ScheduleInput } from "./types";
 import fs from "fs/promises";
 import path from "path";
 
@@ -82,7 +82,9 @@ export async function getSchedules(
       filters = `date[greater_than]${startDate}[and]date[less_than]${endDate}`;
     }
 
-    const response = await client.get<MicroCMSResponse<Schedule>>({
+    // microCMS の返り値は { contents: Schedule[], limit: number, totalCount: number, ... } 形式なので
+    // 必要に応じて型を明示しておく
+    const response = await client.get<{ contents: Schedule[] }>({
       endpoint: "schedules",
       queries: {
         limit: 100,
@@ -257,7 +259,7 @@ export async function getSchedulesByDateRange(
 
     const filters = `date[greater_than]${startDate}[and]date[less_than]${endDate}`;
 
-    const response = await client.get<MicroCMSResponse<Schedule>>({
+    const response = await client.get<{ contents: Schedule[] }>({
       endpoint: "schedules",
       queries: {
         limit: 100,
