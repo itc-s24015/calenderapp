@@ -1,232 +1,127 @@
-// components/Schedule/QuickAddModal.tsx
-
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import type { ScheduleInput } from "@/lib/types";
-import { CATEGORIES } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
-import styles from "./Schedule.module.css";
+import type { Schedule } from "@/lib/types";
+import { formatDate, isValidDate, isValidTime, isValidTimeRange } from "@/lib/utils";
+import styles from "./QuickAddModal.module.css";
 
 interface QuickAddModalProps {
   initialDate: Date;
   onClose: () => void;
   onSaved: () => void;
+  existingSchedule?: Schedule;
 }
 
 export default function QuickAddModal({
   initialDate,
   onClose,
   onSaved,
+  existingSchedule,
 }: QuickAddModalProps) {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState<ScheduleInput>({
-    date: formatDate(initialDate),
-    startTime: "09:00",
-    endTime: "10:00",
-    title: "",
-    description: "",
-    category: "other",
-    color: CATEGORIES[3].defaultColor,
-    completed: false,
-  });
+  const [title, setTitle] = useState(existingSchedule?.title || "");
+  const [date, setDate] = useState(formatDate(initialDate));
+  const [startTime, setStartTime] = useState(existingSchedule?.startTime || "09:00");
+  const [endTime, setEndTime] = useState(existingSchedule?.endTime || "10:00");
+  const [color, setColor] = useState(existingSchedule?.color || "#3b82f6");
+  const [repeat, setRepeat] = useState(existingSchedule?.repeat || "none");
+  const [notificationMinutes, setNotificationMinutes] = useState(
+    existingSchedule?.notificationMinutesBefore || 0
+  );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const [error, setError] = useState("");
 
-    if (!formData.title.trim()) {
-      alert("タイトルを入力してください");
-      return;
-    }
+  const handleSave = async () => {
+    setError("");
+    if (!title.trim()) return setError("タイトルを入力してください");
+    if (!isValidDate(date)) return setError("日付が正しくありません");
+    if (!isValidTime(startTime) || !isValidTime(endTime)) return setError("時間が正しくありません");
+    if (!isValidTimeRange(startTime, endTime)) return setError("終了時間は開始時間より後にしてください");
 
     try {
-      setLoading(true);
-
       const response = await fetch("/api/schedules", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
+        method: existingSchedule ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: existingSchedule?.id,
+          title,
+          date,
+          startTime,
+          endTime,
+          color,
+          repeat,
+          notificationMinutesBefore: notificationMinutes,
+        }),
       });
 
       const data = await response.json();
+      if (data.success) onSaved();
+      else setError(data.error || "保存に失敗しました");
+    } catch (err) {
+      console.error(err);
+      setError("保存中にエラーが発生しました");
+    }
+  };
 
-      if (data.success) {
-        onSaved();
-      } else {
-        alert(data.error || "保存に失敗しました");
-      }
-    } catch (error) {
-      console.error("Failed to save schedule:", error);
-      alert("保存中にエラーが発生しました");
-    } finally {
-      setLoading(false);
+  const handleDelete = async () => {
+    if (!existingSchedule) return;
+    if (!confirm("この予定を削除してよろしいですか？")) return;
+
+    try {
+      const response = await fetch(`/api/schedules/${existingSchedule.id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (data.success) onSaved();
+      else setError(data.error || "削除に失敗しました");
+    } catch (err) {
+      console.error(err);
+      setError("削除中にエラーが発生しました");
     }
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          backgroundColor: "white",
-          padding: "24px",
-          borderRadius: "8px",
-          maxWidth: "500px",
-          width: "90%",
-          maxHeight: "90vh",
-          overflow: "auto",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2
-          style={{ marginBottom: "20px", fontSize: "20px", fontWeight: "600" }}
-        >
-          予定を追加 - {formatDate(initialDate)}
-        </h2>
+    <div className={styles.modalOverlay}>
+      <div className={styles.modal}>
+        <h3>{existingSchedule ? "予定編集" : "予定追加"}</h3>
+        {error && <div className={styles.error}>{error}</div>}
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              タイトル<span style={{ color: "#ef4444" }}>*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.title}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, title: e.target.value }))
-              }
-              className={styles.input}
-              placeholder="予定のタイトル"
-              autoFocus
-            />
-          </div>
+        <label>タイトル</label>
+        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} />
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px",
-              marginBottom: "16px",
-            }}
-          >
-            <div>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontWeight: "600",
-                }}
-              >
-                開始時間
-              </label>
-              <input
-                type="time"
-                value={formData.startTime}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    startTime: e.target.value,
-                  }))
-                }
-                className={styles.input}
-              />
-            </div>
-            <div>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: "6px",
-                  fontWeight: "600",
-                }}
-              >
-                終了時間
-              </label>
-              <input
-                type="time"
-                value={formData.endTime}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, endTime: e.target.value }))
-                }
-                className={styles.input}
-              />
-            </div>
-          </div>
+        <label>日付</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
 
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "6px",
-                fontWeight: "600",
-              }}
-            >
-              カテゴリー
-            </label>
-            <select
-              value={formData.category}
-              onChange={(e) => {
-                const category = CATEGORIES.find(
-                  (c) => c.value === e.target.value
-                );
-                setFormData((prev) => ({
-                  ...prev,
-                  category: e.target.value as any,
-                  color: category?.defaultColor || prev.color,
-                }));
-              }}
-              className={styles.select}
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat.value} value={cat.value}>
-                  {cat.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <label>時間</label>
+        <div className={styles.timeRow}>
+          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          <span>〜</span>
+          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+        </div>
 
-          <div
-            style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}
-          >
-            <button
-              type="button"
-              onClick={onClose}
-              className={`${styles.button} ${styles.buttonSecondary}`}
-              disabled={loading}
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              className={`${styles.button} ${styles.buttonPrimary}`}
-              disabled={loading}
-            >
-              {loading ? "保存中..." : "保存"}
-            </button>
-          </div>
-        </form>
+        <label>色</label>
+        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+
+        <label>繰り返し</label>
+        <select value={repeat} onChange={(e) => setRepeat(e.target.value as any)}>
+          <option value="none">なし</option>
+          <option value="daily">毎日</option>
+          <option value="weekly">毎週</option>
+          <option value="monthly">毎月</option>
+        </select>
+
+        <label>通知（分前）</label>
+        <input
+          type="number"
+          value={notificationMinutes}
+          min={0}
+          onChange={(e) => setNotificationMinutes(Number(e.target.value))}
+        />
+
+        <div className={styles.buttons}>
+          <button className={styles.saveButton} onClick={handleSave}>保存</button>
+          {existingSchedule && (
+            <button className={styles.deleteButton} onClick={handleDelete}>削除</button>
+          )}
+          <button className={styles.cancelButton} onClick={onClose}>キャンセル</button>
+        </div>
       </div>
     </div>
   );

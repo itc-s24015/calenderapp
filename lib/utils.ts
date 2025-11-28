@@ -1,9 +1,10 @@
 // lib/utils.ts
-
 import type { CalendarDay, Schedule } from "./types";
 
 /**
  * 月のカレンダーデータを生成
+ * - schedulesには繰り返し予定も含む
+ * - 過去予定は一覧から削除されるがカレンダーには表示
  */
 export function generateCalendarDays(
   year: number,
@@ -26,7 +27,7 @@ export function generateCalendarDays(
       date,
       isCurrentMonth: false,
       isToday: false,
-      schedules: getSchedulesForDate(date, schedules),
+      schedules: getSchedulesForDate(date, schedules, today),
     });
   }
 
@@ -40,7 +41,7 @@ export function generateCalendarDays(
       date,
       isCurrentMonth: true,
       isToday: dateOnly.getTime() === today.getTime(),
-      schedules: getSchedulesForDate(date, schedules),
+      schedules: getSchedulesForDate(date, schedules, today),
     });
   }
 
@@ -53,7 +54,7 @@ export function generateCalendarDays(
         date,
         isCurrentMonth: false,
         isToday: false,
-        schedules: getSchedulesForDate(date, schedules),
+        schedules: getSchedulesForDate(date, schedules, today),
       });
     }
   }
@@ -63,15 +64,51 @@ export function generateCalendarDays(
 
 /**
  * 指定日付の予定を取得
+ * - 過去予定は一覧には表示されない
+ * - 繰り返し予定も展開
  */
 export function getSchedulesForDate(
   date: Date,
-  schedules: Schedule[]
+  schedules: Schedule[],
+  today: Date
 ): Schedule[] {
-  const dateStr = formatDate(date);
   return schedules
-    .filter((schedule) => schedule.date === dateStr)
+    .filter((schedule) => {
+      const scheduleDate = parseDate(schedule.date);
+
+      // 過去予定は一覧に含めない
+      if (scheduleDate < today) return false;
+
+      // 繰り返し予定の判定
+      if (schedule.repeat && schedule.repeat !== "none") {
+        return isRepeatScheduleOnDate(schedule, date);
+      }
+
+      // 通常予定は当日のみ
+      return schedule.date === formatDate(date);
+    })
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
+}
+
+/**
+ * 繰り返し予定が指定日に発生するか判定
+ */
+function isRepeatScheduleOnDate(schedule: Schedule, date: Date): boolean {
+  const startDate = parseDate(schedule.date);
+  const dayOfWeek = date.getDay();
+
+  switch (schedule.repeat) {
+    case "daily":
+      return startDate <= date;
+    case "weekly":
+      return startDate <= date && startDate.getDay() === dayOfWeek;
+    case "monthly":
+      return startDate <= date && startDate.getDate() === date.getDate();
+    case "custom":
+      return startDate <= date && schedule.customDays?.includes(dayOfWeek) === true;
+    default:
+      return false;
+  }
 }
 
 /**

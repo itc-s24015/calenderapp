@@ -1,85 +1,68 @@
-// app/api/schedules/route.ts
+import { NextResponse } from "next/server";
+import type { Schedule } from "@/lib/types";
 
-import { NextRequest, NextResponse } from "next/server";
-import {
-  getSchedules,
-  createSchedule,
-  createScheduleBulk,
-} from "@/lib/microcms";
-import type { ScheduleInput, APIResponse, Schedule } from "@/lib/types";
+// ダミーデータベース（本番はDBに置き換え）
+let schedules: Schedule[] = [
+  // 例:
+  // { id: 1, title: "会議", date: "2025-11-01", startTime: "09:00", endTime: "10:00", color: "#FF0000" },
+];
 
-/**
- * GET /api/schedules
- * 予定一覧を取得
- */
-export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams;
-    const year = searchParams.get("year");
-    const month = searchParams.get("month");
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const year = Number(searchParams.get("year"));
+  const month = Number(searchParams.get("month"));
 
-    const schedules = await getSchedules(
-      year ? parseInt(year) : undefined,
-      month ? parseInt(month) : undefined
-    );
-
-    return NextResponse.json<APIResponse<Schedule[]>>({
-      success: true,
-      data: schedules,
-    });
-  } catch (error) {
-    console.error("Failed to fetch schedules:", error);
-
-    return NextResponse.json<APIResponse<null>>(
-      {
-        success: false,
-        error: "予定の取得に失敗しました",
-      },
-      { status: 500 }
-    );
+  if (!year || !month) {
+    return NextResponse.json({ success: false, error: "year, monthが必要です" });
   }
+
+  // カレンダーに表示するために「過去予定は削除してカレンダーには残す」
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const filtered = schedules.filter((s) => s.date >= todayStr);
+
+  // 月表示用にその月の予定も取得
+  const monthStr = (m: number) => (m < 10 ? `0${m}` : `${m}`);
+  const monthStart = `${year}-${monthStr(month)}-01`;
+  const monthEnd = `${year}-${monthStr(month)}-${new Date(year, month, 0).getDate()}`;
+
+  const monthSchedules = schedules.filter(
+    (s) => s.date >= monthStart && s.date <= monthEnd
+  );
+
+  return NextResponse.json({ success: true, data: monthSchedules });
 }
 
-/**
- * POST /api/schedules
- * 予定を作成（単体または一括）
- */
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export async function POST(request: Request) {
+  const body = await request.json();
 
-    // 一括作成の場合
-    if (Array.isArray(body)) {
-      const schedules = await createScheduleBulk(body as ScheduleInput[]);
-
-      return NextResponse.json<APIResponse<Schedule[]>>(
-        {
-          success: true,
-          data: schedules,
-        },
-        { status: 201 }
-      );
-    }
-
-    // 単体作成の場合
-    const schedule = await createSchedule(body as ScheduleInput);
-
-    return NextResponse.json<APIResponse<Schedule>>(
-      {
-        success: true,
-        data: schedule,
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error("Failed to create schedule:", error);
-
-    return NextResponse.json<APIResponse<null>>(
-      {
-        success: false,
-        error: "予定の作成に失敗しました",
-      },
-      { status: 500 }
-    );
+  if (!body.title || !body.date) {
+    return NextResponse.json({ success: false, error: "title, date が必要です" });
   }
+const newSchedule: Schedule = {
+  id: schedules.length
+    ? String(Number(schedules[schedules.length - 1].id) + 1)
+    : "1",
+  title: body.title,
+  date: body.date,
+  startTime: body.startTime || "09:00",
+  endTime: body.endTime || "10:00",
+  color: body.color || "#00AAFF",
+  description: body.description || "",
+  category: body.category || "other",
+  completed: false,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+
+  // 追加プロパティ
+  repeat: body.repeat || "none",
+  repeatEndDate: body.repeatEndDate || null,
+  customDays: body.customDays || [],
+  notificationMinutesBefore: body.notificationMinutesBefore || 0,
+};
+
+
+  schedules.push(newSchedule);
+
+  return NextResponse.json({ success: true, data: newSchedule });
 }
